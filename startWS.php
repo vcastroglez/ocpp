@@ -1,4 +1,4 @@
-<?
+<?php
 //Ratchet Chat WS server
 use Ratchet\Server\IoServer;
 use Ratchet\Http\HttpServer;
@@ -11,7 +11,7 @@ require 'vendor/autoload.php';
 
 //Initializing the WebSocket Server
 $socket = new Desc();
-$server = IoServer::factory(new HttpServer(new WsServer($socket)), 2346);
+$server = IoServer::factory(new HttpServer(new WsServer($socket)), 5000);
 //Initializing the WebSocket Server
 
 //When the WebSocket Server connection is active, start a timer to check and send commands to the stations
