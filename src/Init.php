@@ -50,19 +50,52 @@ class Init{
 	//Get the connector id who last ran the command on the current station
 
 	//Write to the database, the history of commands sent manually
-	public function up_command($data, $idTag){
+	public function up_command($data, $idTag)
+	{
+		self::out("---------------------------------------------");
 		self::out($data);
+		self::out($idTag);
+		self::out("---------------------------------------------");
 	}
+
 	//Write to the database, the history of commands sent manually
 
+	private array $allow_msg = [
+		'Authorize',
+		'BootNotification',
+		'Heartbeat',
+		'StatusNotification',
+		'StartTransaction',
+		'StopTransaction',
+		'MeterValues'
+	];
+
 	//We receive some data from the station and process it through the switch - we answer
-	public function Status($data, $idTag = ''){
-		$type = $data[0];
+	public function Status($data, $idTag = '')
+	{
 		$id = $data[1];
-		$msg = $data[2];
-		$payload = $data[3];
-		if($msg!=='Authorize') return null;
-		$uuid = uniqid("csms-",true);
+		$action = $data[2];
+		if(!in_array($action, $this->allow_msg))
+			return null;
+
+		if($action == 'BootNotification') {
+			$this->handleMeterValues($data, $idTag);
+			return $this->sendSuccessfulBootResponse($id);
+		} else if($action == 'StatusNotification') {
+			$this->handleMeterValues($data, $idTag);
+			return $this->sendSuccessfulSstatusNotificationResponse($id);
+		} else if($action == 'Heartbeat') {
+			return $this->sendSuccessfulSstatusNotificationResponse($id);
+		} else if($action == 'StartTransaction') {
+			$this->handleMeterValues($data, $idTag);
+			return $this->sendSuccessfulStartTransaction($id);
+		} else {
+			$this->handleMeterValues($data, $idTag);
+		}
+
+		if($action == 'StopTransaction' || $action == 'MeterValues') {
+			$this->handleMeterValues($data, $idTag);
+		}
 		return '[3,"'.$id.'",{"idTagInfo":{"status":"Accepted"}}]';
 	}
 
@@ -70,7 +103,8 @@ class Init{
 
 	public function StartTransactionStatus($idTag, $data){}
 
-	public function AuthorizeStatus($idTag, $data){
+	public function AuthorizeStatus($idTag, $data)
+	{
 		return true;
 	}
 
@@ -102,7 +136,8 @@ class Init{
 	//Determinations through which algorithm to write off money
 
 	//Write data from counters
-	public function MeterValues($idTag, $data){
+	public function MeterValues($idTag, $data)
+	{
 		self::out($data);
 	}
 
@@ -133,6 +168,35 @@ class Init{
 		}
 
 		echo "OUT -> ".$value.PHP_EOL;
+	}
+
+	private function handleMeterValues($data, mixed $idTag): void
+	{
+		file_put_contents(__DIR__.DIRECTORY_SEPARATOR.'log'.DIRECTORY_SEPARATOR.$idTag.'.log', json_encode($data).PHP_EOL, FILE_APPEND);
+	}
+
+	private function sendSuccessfulBootResponse(mixed $id): string
+	{
+		$status = "Accepted";
+		$currentTime = date('Y-m-d\TH:i:s\Z');
+		$interval = 10;
+		return "[3,\"$id\",{\"currentTime\":\"$currentTime\",\"status\":\"$status\",\"interval\":$interval}]";
+		return '[3,"'.$id.'",{"idTagInfo":{"currentTime":"","status":"Accepted"}}]';
+	}
+
+	private function sendSuccessfulSstatusNotificationResponse(mixed $id): string
+	{
+		$status = "Accepted";
+		$currentTime = date('Y-m-d\TH:i:s\Z');
+		return "[3,\"$id\",{\"currentTime\":\"$currentTime\",\"status\":\"$status\"}]";
+	}
+
+	private function sendSuccessfulStartTransaction(mixed $id): string
+	{
+		$last_id = file_get_contents(__DIR__.'/log/last.log') ?? 0;
+		$transaction_uid = intval($last_id)+1;
+		file_put_contents(__DIR__.'/log/last.log',$transaction_uid);
+		return '[3,"'.$id.'",{"idTagInfo":{"currentTime":"","status":"Accepted"},"transactionId":'.$transaction_uid.'}]';
 	}
 
 }

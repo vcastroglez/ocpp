@@ -83,14 +83,11 @@ class Desc implements MessageComponentInterface{
 			if($from === $client) {
 				if(is_array(json_decode($msg))) {
 					$init = new Init();
-					echo $this->SetLogTxt('SC - '.$this->ReturnidTag($from).' - '.date('H:i:s').' '.$msg.PHP_EOL.PHP_EOL); //We write the log
+					echo $this->SetLogTxt('FROM CP - '.$this->ReturnidTag($from).' - '.date('H:i:s').' '.$msg.PHP_EOL.PHP_EOL); //We write the log
 					$respon = $init->Status(json_decode($msg), $this->ReturnidTag($from)); //We process the received command from the charging station
-					$init->up_command($msg, $this->ReturnidTag($from)); //Write the log from the station
-
 					if($respon != NULL) //If the method is not defined on the server, we work it out and write the command
 					{
 						$client->send($respon);
-						echo $this->SetLogTxt('CS - '.$this->ReturnidTag($from).' - '.date('H:i:s').' '.$respon.PHP_EOL.PHP_EOL); //We write the log
 						$init->up_command($respon, $this->ReturnidTag($from)); //Write the log from the station
 					}
 				} //END if is_array

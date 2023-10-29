@@ -7,7 +7,7 @@
   "require": {
 	"cboden/ratchet": "^0.4",
 	"psr/log": ">=1.0.0",
-	"php": ">=5.4.0",
+	"php": ">=8.1",
 	"ext-posix": "*",
 	"ext-pcntl": "*",
 	"ext-json": "*",
