@@ -2,10 +2,8 @@
 
 namespace MyApp;
 
-use Ratchet\MessageComponentInterface;
 use Ratchet\ConnectionInterface;
-use Ratchet\WebSocket\WsServerInterface;
-use MyApp\Init;
+use Ratchet\MessageComponentInterface;
 
 class Desc implements MessageComponentInterface{
 	public $clients;
@@ -14,18 +12,18 @@ class Desc implements MessageComponentInterface{
 	public function __construct()
 	{
 		$this->clients = new \SplObjectStorage;
-		echo $this->SetLogTxt("WS server started.\r\n\r\n");
+		echo $this->handleLog("WS server started.\r\n\r\n");
 	}
 
-	public function onOpen(ConnectionInterface $conn)
+	public function onOpen(ConnectionInterface $conn): void
 	{
 		$this->clients->attach($conn);
 
-		echo $this->SetLogTxt("New connection ".$this->ReturnidTag($conn)."\r\n");
+		echo $this->handleLog("New connection ".$this->getIdTag($conn)."\r\n");
 
 		$init = new Init();
-		if($init->SelectConected($this->ReturnidTag($conn))) {
-			echo $this->SetLogTxt($this->ReturnidTag($conn)." - "."The charging station has been authorized\r\n\r\n");
+		if($init->chargeStationConnect($this->getIdTag($conn))) {
+			echo $this->handleLog($this->getIdTag($conn)." - "."The charging station has been authorized\r\n\r\n");
 			$this->init = $init;
 
 			//Sometimes it happens that several open WebSocket channels are created for one charging station, our task is to delete old connections
@@ -35,7 +33,7 @@ class Desc implements MessageComponentInterface{
 				//Create a new OWN array with a list of connections
 				$sp = 0;
 				foreach($this->clients as $client) {
-					$allconn[$client->resourceId] = $this->ReturnidTag($client);
+					$allconn[$client->resourceId] = $this->getIdTag($client);
 					$sp++;
 				}
 
@@ -45,15 +43,15 @@ class Desc implements MessageComponentInterface{
 				//Start the loop :)
 				foreach($result as $key => $value) {
 					//If the current connection is equal to the one in the loop and has a match (greater than 1), then draw attention to this
-					if($key == $this->ReturnidTag($conn) && $value > 1) {
-						echo 'Worth paying attention here '.$this->ReturnidTag($conn).PHP_EOL.PHP_EOL;
+					if($key == $this->getIdTag($conn) && $value > 1) {
+						echo 'Worth paying attention here '.$this->getIdTag($conn).PHP_EOL.PHP_EOL;
 						// Loop through the previously created owl array with a list of connections
 						foreach($allconn as $keys => $val) {
-							if($val == $this->ReturnidTag($conn)) //If there are matches from the array with the list of connections with the current connection
+							if($val == $this->getIdTag($conn)) //If there are matches from the array with the list of connections with the current connection
 							{
 								if($conn->resourceId != $keys) {
 									foreach($this->clients as $variable) {
-										if($val == $this->ReturnidTag($variable)) {
+										if($val == $this->getIdTag($variable)) {
 											echo $val.' going to be removed '.$keys.PHP_EOL.PHP_EOL;
 											$this->onClose($variable).' allconn '.PHP_EOL.PHP_EOL;
 											break;
@@ -71,24 +69,24 @@ class Desc implements MessageComponentInterface{
 			}
 
 		} else {
-			echo $this->SetLogTxt($this->ReturnidTag($conn)." - "."Charging station NOT authorized \r\n\r\n");
+			echo $this->handleLog($this->getIdTag($conn)." - "."Charging station NOT authorized \r\n\r\n");
 			$this->onClose($conn);
 		}
 	}
 
 
-	public function onMessage(ConnectionInterface $from, $msg)
+	public function onMessage(ConnectionInterface $from, $msg): void
 	{
 		foreach($this->clients as $client) {
 			if($from === $client) {
 				if(is_array(json_decode($msg))) {
 					$init = new Init();
-					echo $this->SetLogTxt('FROM CP - '.$this->ReturnidTag($from).' - '.date('H:i:s').' '.$msg.PHP_EOL.PHP_EOL); //We write the log
-					$respon = $init->Status(json_decode($msg), $this->ReturnidTag($from)); //We process the received command from the charging station
+					echo $this->handleLog('FROM CP - '.$this->getIdTag($from).' - '.date('H:i:s').' '.$msg.PHP_EOL.PHP_EOL); //We write the log
+					$respon = $init->processChargePointMessage(json_decode($msg), $this->getIdTag($from)); //We process the received command from the charging station
 					if($respon != NULL) //If the method is not defined on the server, we work it out and write the command
 					{
 						$client->send($respon);
-						$init->up_command($respon, $this->ReturnidTag($from)); //Write the log from the station
+						$init->up_command($respon, $this->getIdTag($from)); //Write the log from the station
 					}
 				} //END if is_array
 			}//END $from === $client
@@ -107,17 +105,17 @@ class Desc implements MessageComponentInterface{
 	public function onClose(ConnectionInterface $conn)
 	{
 		$this->clients->detach($conn);
-		echo $this->SetLogTxt("Connection closed ".$this->ReturnidTag($conn)."\r\n\r\n");
+		echo $this->handleLog("Connection closed ".$this->getIdTag($conn)."\r\n\r\n");
 	}
 
 	public function onError(ConnectionInterface $conn, \Exception $e)
 	{
-		echo $this->SetLogTxt("Error: {$e->getMessage()}\r\n");
+		echo $this->handleLog("Error: {$e->getMessage()}\r\n");
 		$conn->close();
 	}
 
 	// Get the station ID
-	public function ReturnidTag($conn)
+	public function getIdTag($conn)
 	{
 		$request = $conn->httpRequest;
 		$pieces = explode("/", $request->getUri()->getPath());
@@ -128,7 +126,7 @@ class Desc implements MessageComponentInterface{
 	// Get the station ID
 
 	//We write logs
-	public function SetLogTxt($record)
+	public function handleLog($record)
 	{
 		//$filename = __DIR__.'/server.log';
 		//file_put_contents($filename, $record, FILE_APPEND | LOCK_EX);

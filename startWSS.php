@@ -34,17 +34,17 @@ $ioServer->loop->addPeriodicTimer(5, function () use ($socket)
   foreach($socket->clients as $client)
   {
     $init = new Init();
-    $send = $init->SetCommand($socket->ReturnidTag($client));
+    $send = $init->SetCommand($socket->getIdTag($client));
     if($send)
     {
-        if ($send['idTag'] === $socket->ReturnidTag($client))
+        if ($send['idTag'] === $socket->getIdTag($client))
         {
-          $init->UpUserCommand($socket->ReturnidTag($client), $send['user_id']);
+          $init->UpUserCommand($socket->getIdTag($client), $send['user_id']);
 
-          echo 'CS - user_id - '.$send['user_id'].' - '.$socket->ReturnidTag($client).' '.date('H:i:s').' '.$send['text'].PHP_EOL.PHP_EOL;
+          echo 'CS - user_id - '.$send['user_id'].' - '.$socket->getIdTag($client).' '.date('H:i:s').' '.$send['text'].PHP_EOL.PHP_EOL;
           //$socket->onMessageTimer($client, $send['text']);
           $client->send($send['text']);
-          $init->up_command($send['text'], $socket->ReturnidTag($client));
+          $init->up_command($send['text'], $socket->getIdTag($client));
         }
     }
   }

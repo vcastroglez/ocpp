@@ -5,8 +5,6 @@
 
 namespace MyApp;
 
-include('config/define.php');
-
 class Init{
 	private $db;
 	private $idTag;
@@ -21,16 +19,23 @@ class Init{
 	}
 
 	//Check if there are permissions for the charging station to connect to our server
-	public function SelectConected($idTag)
+	public function chargeStationConnect($id_tag): bool
 	{
-		self::out($idTag);
-		$this->db->query("INSERT INTO connections SET uuid = '$idTag'");
+		self::out($id_tag);
+		$charge_point = $this->getChargePoint($id_tag);
+		if(!$charge_point) {
+			$this->db->query("INSERT IGNORE INTO charge_points SET uuid = '$id_tag', created_at = NOW(), updated_at = NOW()");
+		}
 		return true;
 	}
 	//Check if there are permissions for the charging station to connect to our server
 
 	//Ping the my_set_command database and if there is a command, send the command to the charging station, then delete the command and the database
-	public function SetCommand($idTag){}
+	public function SetCommand($idTag)
+	{
+		//TODO
+		return false;
+	}
 	//Ping the my_set_command database and if there is a command, send the command to the charging station, then delete the command and the database
 
 	//We write to the temporary base which connector was launched
@@ -71,31 +76,39 @@ class Init{
 	];
 
 	//We receive some data from the station and process it through the switch - we answer
-	public function Status($data, $idTag = '')
+	public function processChargePointMessage($data, $id_tag = ''): ?string
 	{
 		$id = $data[1];
 		$action = $data[2];
 		if(!in_array($action, $this->allow_msg))
 			return null;
 
+		$message_type = $this->getMessageType($action);
+		if(empty($message_type['id'])) {
+			$this->db->query("INSERT INTO message_types SET type = '$action', updated_at = NOW(), created_at = NOW()");
+			$message_type = $this->getMessageType($action);
+		}
+		$charge_point = $this->getChargePoint($id_tag);
+		$payload = $data[3] ?? null;
+		$this->saveNewMessage($charge_point['id'], $message_type['id'], $payload);
+
 		if($action == 'BootNotification') {
-			$this->handleMeterValues($data, $idTag);
 			return $this->sendSuccessfulBootResponse($id);
 		} else if($action == 'StatusNotification') {
-			$this->handleMeterValues($data, $idTag);
 			return $this->sendSuccessfulSstatusNotificationResponse($id);
 		} else if($action == 'Heartbeat') {
 			return $this->sendSuccessfulSstatusNotificationResponse($id);
 		} else if($action == 'StartTransaction') {
-			$this->handleMeterValues($data, $idTag);
-			return $this->sendSuccessfulStartTransaction($id);
+			$this->handleMeterValues($id_tag, $data);
+			return $this->handleStartTransaction($id, $id_tag, $data);
+		} else if($action == 'StopTransaction') {
+			$this->handleMeterValues($id_tag, $data);
+			$this->saveTransactionEnd($id_tag, $data);
 		} else {
-			$this->handleMeterValues($data, $idTag);
+			$this->handleMeterValues($id_tag, $data);
 		}
 
-		if($action == 'StopTransaction' || $action == 'MeterValues') {
-			$this->handleMeterValues($data, $idTag);
-		}
+
 		return '[3,"'.$id.'",{"idTagInfo":{"status":"Accepted"}}]';
 	}
 
@@ -105,6 +118,7 @@ class Init{
 
 	public function AuthorizeStatus($idTag, $data)
 	{
+		echo "Authorize".PHP_EOL;
 		return true;
 	}
 
@@ -163,16 +177,24 @@ class Init{
 
 	public static function out($value)
 	{
+		$encoded = $value;
 		if(!is_string($value)) {
-			$value = json_encode($value);
+			$encoded = json_encode($value);
 		}
 
-		echo "OUT -> ".$value.PHP_EOL;
+		echo "OUT -> ".gettype($value).': '.$encoded.PHP_EOL;
 	}
 
-	private function handleMeterValues($data, mixed $idTag): void
+	private function handleMeterValues(string $idTag, $data): void
 	{
-		file_put_contents(__DIR__.DIRECTORY_SEPARATOR.'log'.DIRECTORY_SEPARATOR.$idTag.'.log', json_encode($data).PHP_EOL, FILE_APPEND);
+		$charge_point = $this->getChargePoint($idTag);
+		$payload = $data[3];
+		$meter_value = $payload->meterStop ?? $payload->meterStart ?? null;
+		if(is_null($meter_value)) {
+			return;
+		}
+
+		$this->updateLastMeterValue($charge_point['id'], $meter_value);
 	}
 
 	private function sendSuccessfulBootResponse(mixed $id): string
@@ -181,7 +203,6 @@ class Init{
 		$currentTime = date('Y-m-d\TH:i:s\Z');
 		$interval = 10;
 		return "[3,\"$id\",{\"currentTime\":\"$currentTime\",\"status\":\"$status\",\"interval\":$interval}]";
-		return '[3,"'.$id.'",{"idTagInfo":{"currentTime":"","status":"Accepted"}}]';
 	}
 
 	private function sendSuccessfulSstatusNotificationResponse(mixed $id): string
@@ -191,12 +212,53 @@ class Init{
 		return "[3,\"$id\",{\"currentTime\":\"$currentTime\",\"status\":\"$status\"}]";
 	}
 
-	private function sendSuccessfulStartTransaction(mixed $id): string
+	private function handleStartTransaction(mixed $id, string $id_tag, array $payload): string
 	{
-		$last_id = file_get_contents(__DIR__.'/log/last.log') ?? 0;
-		$transaction_uid = intval($last_id)+1;
-		file_put_contents(__DIR__.'/log/last.log',$transaction_uid);
-		return '[3,"'.$id.'",{"idTagInfo":{"currentTime":"","status":"Accepted"},"transactionId":'.$transaction_uid.'}]';
+		$charge_point = $this->getChargePoint($id_tag);
+		$transaction_incremental = $charge_point['last_transaction_id'] + 1;
+		$transaction_uid = $id_tag.'-'.$transaction_incremental;
+		$this->updateLastTransaction($charge_point['id'], $transaction_incremental);
+		$this->saveTransactionStart($charge_point['id'], $transaction_uid, $payload[3]->meterStart);
+		return '[3,"'.$id.'",{"idTagInfo":{"currentTime":"","status":"Accepted"},"transactionId":"'.$transaction_uid.'"}]';
 	}
 
+	private function getMessageType(mixed $action): ?array
+	{
+		return $this->db->query("SELECT id FROM message_types WHERE type='$action'")[0] ?? null;
+	}
+
+	private function getChargePoint($id_tag): ?array
+	{
+		return $this->db->query("SELECT * FROM charge_points WHERE uuid = '$id_tag'")[0] ?? null;
+	}
+
+	private function saveNewMessage(mixed $charge_point_id, mixed $message_id, mixed $payload): void
+	{
+		$payload = json_encode($payload);
+		@$this->db->query("INSERT INTO messages SET id_charge_point = {$charge_point_id}, id_message_type = {$message_id}, payload = '$payload', updated_at = NOW(), created_at = NOW()");
+	}
+
+	private function updateLastTransaction(int $id, int $transaction_uid): void
+	{
+		@$this->db->query("UPDATE charge_points SET last_transaction_id = $transaction_uid, updated_at = NOW() WHERE id = $id");
+	}
+
+	private function updateLastMeterValue(mixed $id, $meter_value)
+	{
+		@$this->db->query("UPDATE charge_points SET last_meter_value = $meter_value, updated_at = NOW() WHERE id = $id");
+	}
+
+	private function saveTransactionStart(int $id_charge_point, string $transaction_uid, int $meter_start)
+	{
+		@$this->db->query("INSERT INTO transactions SET id_charge_point = {$id_charge_point}, transaction_uuid = '$transaction_uid', meter_start = $meter_start, updated_at = NOW(), created_at = NOW()");
+	}
+
+	private function saveTransactionEnd(mixed $id_tag, $data)
+	{
+		$charge_point = $this->getChargePoint($id_tag);
+		$stop_transaction = $data[3]->meterStop;
+		$transaction_id = $data[3]->transactionId;
+		//		$reason = $data[3]->reason;//todo
+		@$this->db->query("UPDATE transactions SET meter_stop = $stop_transaction WHERE transaction_uuid = '$transaction_id' AND id_charge_point = {$charge_point['id']}");
+	}
 }
