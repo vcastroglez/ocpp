@@ -33,8 +33,21 @@ class Init{
 	//Ping the my_set_command database and if there is a command, send the command to the charging station, then delete the command and the database
 	public function SetCommand($idTag)
 	{
-		//TODO
-		return false;
+		$command = $this->getFirstCommand($idTag);
+		if(empty($command)) {
+			return false;
+		}
+		$uuid = md5(rand(0, 999999999));
+		$payload = json_decode($command['payload'], true);
+		$type = $command['message_type'] ?? 2;
+		$action = $payload['action'];
+		$text = json_encode($payload['text']);
+		$this->db->query("DELETE FROM server_msg_queues WHERE id = {$command['id']}");
+		return [
+			'user_id' => $command['user_id'],
+			'idTag'   => $idTag,
+			'text'    => '['.$type.',"'.$uuid.'", "'.$action.'", '.$text.']'
+		];
 	}
 	//Ping the my_set_command database and if there is a command, send the command to the charging station, then delete the command and the database
 
@@ -260,5 +273,21 @@ class Init{
 		$transaction_id = $data[3]->transactionId;
 		//		$reason = $data[3]->reason;//todo
 		@$this->db->query("UPDATE transactions SET meter_stop = $stop_transaction WHERE transaction_uuid = '$transaction_id' AND id_charge_point = {$charge_point['id']}");
+	}
+
+	private function getFirstCommand($idTag)
+	{
+		$charge_point = $this->getChargePoint($idTag);
+		if(empty($charge_point)) {
+			self::out("[WARNING] No charpoint found with idTag: $idTag");
+			return;
+		}
+
+		$msgs = $this->db->query("SELECT * FROM server_msg_queues WHERE id_charge_point = {$charge_point['id']} ORDER BY created_at DESC");
+		if(empty($msgs)) {
+			return null;
+		}
+
+		return $msgs[0];
 	}
 }
