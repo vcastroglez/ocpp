@@ -21,7 +21,7 @@ class Init{
 	//Check if there are permissions for the charging station to connect to our server
 	public function chargeStationConnect($id_tag): bool
 	{
-		if(empty($id_tag) || $id_tag == 'robots.txt' || $id_tag == 'sitemap.xml') {
+		if(empty($id_tag) || $id_tag == 'robots.txt' || $id_tag == 'sitemap.xml' || $id_tag == 'favicon.ico') {
 			echo file_get_contents(__DIR__.'/robots.txt');
 			return false;
 		}
