@@ -21,6 +21,11 @@ class Init{
 	//Check if there are permissions for the charging station to connect to our server
 	public function chargeStationConnect($id_tag): bool
 	{
+		if(empty($id_tag) || $id_tag == 'robots.txt' || $id_tag == 'sitemap.xml') {
+			echo file_get_contents(__DIR__.'/robots.txt');
+			return false;
+		}
+
 		self::out($id_tag);
 		$charge_point = $this->getChargePoint($id_tag);
 		if(!$charge_point) {
