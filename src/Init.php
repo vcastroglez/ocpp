@@ -5,6 +5,8 @@
 
 namespace MyApp;
 
+use stdClass;
+
 class Init{
 	private $db;
 	private $idTag;
@@ -90,16 +92,28 @@ class Init{
 		'StatusNotification',
 		'StartTransaction',
 		'StopTransaction',
-		'MeterValues'
+		'MeterValues',
+		'GetConfiguration',
 	];
 
 	//We receive some data from the station and process it through the switch - we answer
 	public function processChargePointMessage($data, $id_tag = ''): ?string
 	{
+		$cp_message_type = $data[0];
 		$id = $data[1];
+		if($cp_message_type == 3) {
+			$this->handleGetConfiguration($id_tag, $id, $data[2]);
+			return "";
+		}
 		$action = $data[2];
-		if(!in_array($action, $this->allow_msg))
+
+		if(!in_array($action, $this->allow_msg)) {
+			self::out("NO ACTION, $cp_message_type");
 			return null;
+		} else {
+			self::out("HANDLING ACTION $cp_message_type with sub-action: $action");
+		}
+
 
 		$message_type = $this->getMessageType($action);
 		if(empty($message_type['id'])) {
@@ -107,7 +121,7 @@ class Init{
 			$message_type = $this->getMessageType($action);
 		}
 		$charge_point = $this->getChargePoint($id_tag);
-		$payload = $data[3] ?? null;
+		$payload = $cp_message_type == 3 ? $data[2] ?? null : $data[3] ?? null;
 		$this->saveNewMessage($charge_point['id'], $message_type['id'], $payload);
 
 		if($action == 'BootNotification') {
@@ -122,7 +136,7 @@ class Init{
 		} else if($action == 'StopTransaction') {
 			$this->handleMeterValues($id_tag, $data);
 			$this->saveTransactionEnd($id_tag, $data);
-		} else {
+		} else if($cp_message_type == 2) {
 			$this->handleMeterValues($id_tag, $data);
 		}
 
@@ -294,5 +308,33 @@ class Init{
 		}
 
 		return $msgs[0];
+	}
+
+	private function handleGetConfiguration(string $id_tag, string $message_uuid, stdClass $data)
+	{
+		$charge_point = $this->getChargePoint($id_tag);
+
+		$configurations = $data->configurationKey ?? [];
+		if(empty($configurations)) {
+			return;
+		}
+		foreach($configurations as $configuration) {
+			$key = $configuration->key ?? null;
+			$value = $configuration->value ?? null;
+			$readonly = $configuration->readonly ?? true;
+
+			if(empty($key)) {
+				continue;
+			}
+
+			$this->updateConfiguration($charge_point['id'], $key, $readonly, $value);
+		}
+	}
+
+	private function updateConfiguration(mixed $id, $key, bool $readonly = false, $value = null): void
+	{
+		$readonly = $readonly ? 1 : 0;
+		$value = $value ? '"'.$value.'"' : 'NULL';
+		$this->db->query("REPLACE INTO charge_point_configurations SET id_charge_point = $id, `key` = '$key', readonly = $readonly, value = $value, updated_at = NOW(), created_at = COALESCE(created_at, NOW())");
 	}
 }
