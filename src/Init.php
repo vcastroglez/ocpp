@@ -246,12 +246,25 @@ class Init{
 
 	private function handleStartTransaction(mixed $id, string $id_tag, array $payload): string
 	{
-		$charge_point = $this->getChargePoint($id_tag);
-		$transaction_incremental = $charge_point['last_transaction_id'] + 1;
-		$transaction_uid = $id_tag.'-'.$transaction_incremental;
-		$this->updateLastTransaction($charge_point['id'], $transaction_incremental);
-		$this->saveTransactionStart($charge_point['id'], $transaction_uid, $payload[3]->meterStart);
-		return '[3,"'.$id.'",{"idTagInfo":{"currentTime":"","status":"Accepted"},"transactionId":"'.$transaction_uid.'"}]';
+		$message = $payload[3] or self::out("ERROR: wrong message type: ".var_export($payload));
+		$client = $this->getClient($message->idTag)[0] ?? null;
+		$status_transaction = "Accepted";
+		$transaction_uid = "NONE";
+
+		if(empty($client)) {
+			$this->createClient($message->idTag);
+			$status_transaction = "Invalid";
+		} else if($client['authorized']) {
+			$charge_point = $this->getChargePoint($id_tag);
+			$transaction_incremental = $charge_point['last_transaction_id'] + 1;
+			$transaction_uid = $id_tag.'-'.$transaction_incremental;
+			$this->updateLastTransaction($charge_point['id'], $transaction_incremental);
+			$this->saveTransactionStart($charge_point['id'], $transaction_uid, $message->meterStart, $client['id'], $message->connectorId);
+		} else {
+			$status_transaction = "Blocked";
+		}
+
+		return '[3,"'.$id.'",{"idTagInfo":{"currentTime":"","status":"'.$status_transaction.'"},"transactionId":"'.$transaction_uid.'"}]';
 	}
 
 	private function getMessageType(mixed $action): ?array
@@ -280,9 +293,16 @@ class Init{
 		@$this->db->query("UPDATE charge_points SET last_meter_value = $meter_value, updated_at = NOW() WHERE id = $id");
 	}
 
-	private function saveTransactionStart(int $id_charge_point, string $transaction_uid, int $meter_start)
+	private function saveTransactionStart(int $id_charge_point, string $transaction_uid, int $meter_start, int $client_id, int $connector_id = 1)
 	{
-		@$this->db->query("INSERT INTO transactions SET id_charge_point = {$id_charge_point}, transaction_uuid = '$transaction_uid', meter_start = $meter_start, updated_at = NOW(), created_at = NOW()");
+		@$this->db->query("INSERT INTO transactions SET 
+                             id_charge_point = {$id_charge_point}, 
+                             transaction_uuid = '$transaction_uid', 
+                             meter_start = $meter_start, 
+                             connector_id = $connector_id, 
+                             id_client = $client_id, 
+                             updated_at = NOW(), 
+                             created_at = COALESCE(created_at, NOW())");
 	}
 
 	private function saveTransactionEnd(mixed $id_tag, $data)
@@ -347,5 +367,15 @@ class Init{
 		}
 
 		return false;
+	}
+
+	private function getClient($identifier): array
+	{
+		return $this->db->query("SELECT * FROM clients WHERE uuid = '$identifier'");
+	}
+
+	private function createClient($identifier): void
+	{
+		$this->db->query("INSERT INTO clients SET uuid = '$identifier', authorized = 0, created_at = NOW(), updated_at = NOW()");
 	}
 }
